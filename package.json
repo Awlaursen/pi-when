@@ -1,6 +1,6 @@
 {
   "name": "pi-when",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension: message time in the top-right corner of every box (user, assistant, tool). Display-only, keeps the layout and the model context unchanged.",
   "type": "module",
   "license": "MIT",
