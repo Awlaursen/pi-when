@@ -33,7 +33,8 @@
   },
   "scripts": {
     "test": "node --test when.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "render-example": "COLORTERM=truecolor node docs/render-example.ts && rsvg-convert docs/example.svg -o docs/example.png --zoom 2"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

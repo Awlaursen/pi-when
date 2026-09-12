@@ -8,19 +8,9 @@ pi install npm:pi-when
 
 ## How it looks
 
-```
-┌──────────────────────────────────────── 14:32 ┐
-│ > fix the flaky test                          │
-└───────────────────────────────────────────────┘
+![User, assistant and tool boxes, each with the time in its top-right corner](https://raw.githubusercontent.com/Awlaursen/pi-when/master/docs/example.png)
 
-                                           14:32
-Sure, the race is in `setup()`…
-
-┌──────────────────────────────────────── 14:33 ┐
-│ bash  npm test                                │
-│ ✔ 12 passed                                   │
-└───────────────────────────────────────────────┘
-```
+Rendered by Pi's own components (`docs/render-example.ts`), so the picture is what you get.
 
 The stamp is drawn on the box's existing top padding line, so layout doesn't change. Its color is the box's own background nudged toward contrast (brighter on dark themes, darker on light ones), so it stays discreet and follows a tool box when it turns green/red on completion. On 256-color terminals it uses the terminal's dim attribute instead.
 
