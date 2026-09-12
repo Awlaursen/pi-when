@@ -1,16 +1,36 @@
 {
   "name": "pi-when",
   "version": "0.1.0",
-  "description": "Pi extension: paints each message's time into the top-right corner of its own box (user, assistant, tool). No extra rows, no model context.",
+  "description": "Pi extension: message time in the top-right corner of every box (user, assistant, tool). Display-only, keeps the layout and the model context unchanged.",
   "type": "module",
   "license": "MIT",
   "author": "Albert Laursen",
-  "repository": { "type": "git", "url": "git+https://github.com/Awlaursen/pi-when.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Awlaursen/pi-when.git"
+  },
   "homepage": "https://github.com/Awlaursen/pi-when#readme",
-  "bugs": { "url": "https://github.com/Awlaursen/pi-when/issues" },
-  "keywords": ["pi-package", "pi-extension", "pi-coding-agent", "timestamp", "timestamps", "tui"],
-  "files": ["when.ts", "README.md", "LICENSE"],
-  "pi": { "extensions": ["./when.ts"] },
+  "bugs": {
+    "url": "https://github.com/Awlaursen/pi-when/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "timestamp",
+    "timestamps",
+    "tui"
+  ],
+  "files": [
+    "when.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./when.ts"
+    ]
+  },
   "scripts": {
     "test": "node --test when.test.ts",
     "typecheck": "tsc --noEmit"
