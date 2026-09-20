@@ -6,10 +6,24 @@ import {
 	ToolExecutionComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import ext from "./when.ts";
+import ext, { resolveConfig, strftime } from "./when.ts";
 
 process.env.TZ = "UTC";
 initTheme("dark");
+
+// Pin the format so the rendering tests below do not depend on the machine's when.json, and so a
+// fixed past timestamp still renders as plain HH:MM. The adaptive default has its own test.
+const state = (globalThis as any)[Symbol.for("pi-when")];
+state.config = { format: "%H:%M", formatOlder: "%H:%M" };
+const withConfig = (config: any, fn: () => void) => {
+	const previous = state.config;
+	state.config = config;
+	try {
+		fn();
+	} finally {
+		state.config = previous;
+	}
+};
 const W = 40;
 const strip = (s: string) =>
 	s.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g, "");
@@ -164,6 +178,74 @@ test("too narrow: line left untouched", () => {
 	const c = new UserMessageComponent("hi");
 	const lines = c.render(4);
 	assert.equal(strip(lines[0]).trim(), "");
+});
+
+test("strftime: every token, literals kept, unknown token left as written", () => {
+	const d = new Date(Date.UTC(2026, 8, 19, 14, 32, 7)); // Saturday 2026-09-19
+	assert.equal(strftime(d, "%H:%M:%S"), "14:32:07");
+	assert.equal(strftime(d, "%I%p"), "02PM");
+	assert.equal(strftime(new Date(Date.UTC(2026, 8, 19, 9, 0)), "%I %p"), "09 AM");
+	assert.equal(strftime(d, "%a %A"), "Sat Saturday");
+	assert.equal(strftime(d, "%b %B"), "Sep September");
+	assert.equal(strftime(d, "%Y-%m-%d %y"), "2026-09-19 26");
+	assert.equal(strftime(d, "%F %T"), "2026-09-19 14:32:07");
+	assert.equal(strftime(d, "%R"), "14:32");
+	assert.equal(strftime(d, "at %R %%"), "at 14:32 %");
+	assert.equal(strftime(d, "%q"), "%q", "unknown token is visible, not silently dropped");
+	assert.equal(strftime(d, "%%H"), "%H", "%% does not consume the next token");
+});
+
+test("resolveConfig: defaults, project over home, env over both, null and junk handled", () => {
+	const noEnv = {};
+	assert.deepEqual(resolveConfig(undefined, undefined, noEnv), {
+		format: "%H:%M",
+		formatOlder: "%a %H:%M",
+	});
+	assert.deepEqual(resolveConfig({ format: "%T" }, undefined, noEnv), {
+		format: "%T",
+		formatOlder: "%a %H:%M",
+	});
+	assert.equal(
+		resolveConfig({ format: "%T" }, { format: "%R" }, noEnv).format,
+		"%R",
+		"project wins over home",
+	);
+	assert.deepEqual(
+		resolveConfig({ format: "%T" }, { format: "%R" }, { PI_WHEN_FORMAT: "%F" }),
+		{ format: "%F", formatOlder: "%F" },
+		"a bare PI_WHEN_FORMAT overrides both slots",
+	);
+	assert.equal(
+		resolveConfig(undefined, undefined, {
+			PI_WHEN_FORMAT: "%F",
+			PI_WHEN_FORMAT_OLDER: "%a",
+		}).formatOlder,
+		"%a",
+	);
+	assert.deepEqual(resolveConfig({ formatOlder: null }, undefined, noEnv), {
+		format: "%H:%M",
+		formatOlder: "%H:%M",
+		}, "null means one format everywhere");
+	assert.deepEqual(resolveConfig({ format: 5 }, "not an object", noEnv), {
+		format: "%H:%M",
+		formatOlder: "%a %H:%M",
+	}, "junk falls back instead of throwing inside render");
+});
+
+test("adaptive default: short today, weekday-qualified once the message is older", () => {
+	withConfig({ format: "%H:%M", formatOlder: "%a %H:%M" }, () => {
+		const today = new Date();
+		today.setHours(8, 15, 0, 0);
+		boot([msg("user", "fresh", today.getTime()), msg("user", "stale", T(9, 5))]);
+		assert.equal(
+			strip(new UserMessageComponent("fresh").render(W)[0]).trim(),
+			"08:15",
+		);
+		assert.equal(
+			strip(new UserMessageComponent("stale").render(W)[0]).trim(),
+			"Thu 09:05", // 2026-01-01
+		);
+	});
 });
 
 test("stale ctx never crashes render", () => {
