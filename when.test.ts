@@ -230,6 +230,50 @@ test("resolveConfig: defaults, project over home, env over both, null and junk h
 		format: "%H:%M",
 		formatOlder: "%a %H:%M",
 	}, "junk falls back instead of throwing inside render");
+	assert.deepEqual(
+		resolveConfig(undefined, undefined, { PI_WHEN_FORMAT: "" }),
+		{ format: "", formatOlder: "" },
+		"an empty PI_WHEN_FORMAT is a setting, not an absent variable",
+	);
+});
+
+test("untrusted project config cannot inject terminal control sequences", () => {
+	// A repository someone else wrote ships .pi/when.json; JSON escapes arrive as real bytes and the
+	// stamp is written straight to the terminal. OSC 52 would otherwise set the system clipboard.
+	const hostile = {
+		format: "\u001b]52;c;aGVsbG8=\u0007%H:%M",
+		formatOlder: "\u001b[2J%H:%M\u007f",
+	};
+	const got = resolveConfig(undefined, hostile, {});
+	assert.equal(got.format, "]52;c;aGVsbG8=%H:%M");
+	assert.equal(got.formatOlder, "[2J%H:%M");
+	for (const f of [got.format, got.formatOlder])
+		assert.ok(
+			!/[\u0000-\u001F\u007F-\u009F]/.test(f),
+			"no control byte survives into a format",
+		);
+	// The same applies to the environment and the home file, so one rule covers every source.
+	assert.equal(
+		resolveConfig({ format: "\u001b[31m%R" }, undefined, {}).format,
+		"[31m%R",
+	);
+});
+
+test("/reload from 0.1.x: state object without a config field does not crash", () => {
+	// 0.1.x stored no config under Symbol.for("pi-when"), and /reload reuses that object.
+	const legacy = { ...state };
+	delete (legacy as any).config;
+	assert.doesNotThrow(() => {
+		if (
+			(legacy as any).config?.format !== "%H:%M" ||
+			(legacy as any).config?.formatOlder !== "%a %H:%M"
+		)
+			(legacy as any).config = { format: "%H:%M", formatOlder: "%a %H:%M" };
+	});
+	assert.deepEqual((legacy as any).config, {
+		format: "%H:%M",
+		formatOlder: "%a %H:%M",
+	});
 });
 
 test("adaptive default: short today, weekday-qualified once the message is older", () => {

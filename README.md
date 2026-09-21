@@ -57,6 +57,8 @@ Formats are [`strftime(3)`](https://man7.org/linux/man-pages/man3/strftime.3.htm
 
 Names are English whatever your locale is, so the stamp keeps a predictable width. An unrecognised `%q` is left in place rather than dropped, so a typo is visible. Edits apply on `/reload`; a malformed file falls back to the defaults instead of breaking the display.
 
+Control characters are stripped from a format before it is used. A project's `.pi/when.json` belongs to whoever wrote that repository, and the stamp goes straight to your terminal, so a format is not allowed to carry escape sequences.
+
 The corner has to fit: when the box is narrower than the stamp, the line is left blank rather than truncated.
 
 ## Tuning

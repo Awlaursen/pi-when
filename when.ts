@@ -66,8 +66,14 @@ export type WhenConfig = { format: string; formatOlder: string };
 /** Short today, weekday-qualified once a message is not from today. */
 const DEFAULTS: WhenConfig = { format: "%H:%M", formatOlder: "%a %H:%M" };
 
+// A project's .pi/when.json is untrusted: Pi may be started in a repository written by someone
+// else, JSON escapes such as \u001b become real control bytes, and the stamp is written straight
+// to the terminal. Without this a repository could inject CSI/OSC sequences into every box --
+// spoofing the display, or writing the clipboard with OSC 52. No timestamp format needs C0, DEL
+// or C1, so they are stripped from every source rather than only from the untrusted one.
+const sanitize = (s: string) => s.replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
 const str = (v: unknown, fallback: string) =>
-	typeof v === "string" ? v : fallback;
+	typeof v === "string" ? sanitize(v) : fallback;
 const obj = (v: unknown): any => (v && typeof v === "object" ? v : {});
 
 /**
@@ -83,8 +89,10 @@ export function resolveConfig(
 	const merged = { ...DEFAULTS, ...obj(home), ...obj(project) };
 	const format = str(env.PI_WHEN_FORMAT, str(merged.format, DEFAULTS.format));
 	// formatOlder null means "one format everywhere"; a bare PI_WHEN_FORMAT overrides both slots.
+	// Tested against undefined, not truthiness: PI_WHEN_FORMAT="" is a valid way to ask for no
+	// stamp at all, and must silence older messages too rather than restoring their file format.
 	const older =
-		merged.formatOlder === null || env.PI_WHEN_FORMAT
+		merged.formatOlder === null || env.PI_WHEN_FORMAT !== undefined
 			? format
 			: str(merged.formatOlder, DEFAULTS.formatOlder);
 	return { format, formatOlder: str(env.PI_WHEN_FORMAT_OLDER, older) };
@@ -97,12 +105,21 @@ const readJson = (path: string): unknown => {
 		return undefined; // absent, unreadable or malformed: fall back, never crash the TUI
 	}
 };
-const loadConfig = (): WhenConfig =>
-	resolveConfig(
+const loadConfig = (): WhenConfig => {
+	let project: unknown;
+	try {
+		// process.cwd() itself throws once the directory is deleted under a long-running session,
+		// before readJson's own guard can catch anything.
+		project = readJson(join(process.cwd(), ".pi", "when.json"));
+	} catch {
+		project = undefined;
+	}
+	return resolveConfig(
 		readJson(join(homedir(), ".pi", "when.json")),
-		readJson(join(process.cwd(), ".pi", "when.json")),
+		project,
 		process.env,
 	);
+};
 
 // Process-global state so /reload (which re-evaluates this module) swaps the entry source instead
 // of leaving the prototype patch bound to a stale ctx, and never wraps render() twice.
@@ -124,9 +141,12 @@ const state: State = ((globalThis as any)[Symbol.for("pi-when")] ??= {
 // Re-read on every module evaluation so /reload applies when.json edits. Cached stamps were
 // rendered with the old format, so drop them when it changes.
 const loaded = loadConfig();
+// Optional access on a non-optional field: a 0.1.x process still holds a state object with no
+// config, and /reload keeps that object, so a plain dereference would throw here and take the
+// extension down before it could register.
 if (
-	state.config.format !== loaded.format ||
-	state.config.formatOlder !== loaded.formatOlder
+	state.config?.format !== loaded.format ||
+	state.config?.formatOlder !== loaded.formatOlder
 ) {
 	state.config = loaded;
 	state.stamps = new WeakMap();
