@@ -193,6 +193,24 @@ const userText = (m: any): string =>
 				.map((c: any) => c.text)
 				.join("");
 
+// Tool-call id -> time of the assistant message that issued it. Scanning the entries per
+// component made session load quadratic; the session is append-only, so the index is keyed on
+// entry count plus last entry id (a session switch changes at least one of them).
+let toolTimes: { key: string; map: Map<string, number | undefined> } | undefined;
+const toolTime = (entries: any[], id: string): number | undefined => {
+	const key = `${entries.length}:${entries[entries.length - 1]?.id}`;
+	if (toolTimes?.key !== key) {
+		const map = new Map<string, number | undefined>();
+		for (const e of entries) {
+			if (e.type !== "message" || e.message.role !== "assistant") continue;
+			for (const p of e.message.content)
+				if (p.type === "toolCall") map.set(p.id, entryTime(e));
+		}
+		toolTimes = { key, map };
+	}
+	return toolTimes.map.get(id);
+};
+
 /** Resolved timestamp, or undefined when not (yet) known so the caller does not cache a guess. */
 function timestampFor(c: any): number | undefined {
 	if (c instanceof AssistantMessageComponent) {
@@ -201,15 +219,7 @@ function timestampFor(c: any): number | undefined {
 	}
 	const entries = getEntries();
 	if (!entries) return undefined;
-	if (c instanceof ToolExecutionComponent) {
-		const id = (c as any).toolCallId;
-		for (const e of entries) {
-			if (e.type !== "message" || e.message.role !== "assistant") continue;
-			if (e.message.content.some((p: any) => p.type === "toolCall" && p.id === id))
-				return entryTime(e);
-		}
-		return undefined;
-	}
+	if (c instanceof ToolExecutionComponent) return toolTime(entries, (c as any).toolCallId);
 	// User message: match by text. Pi rebuilds the chat (new components) on compaction, tree
 	// navigation and some settings toggles without a session event, so if every match is already
 	// claimed, treat that as a rebuild, reset, and try once more.
