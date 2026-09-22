@@ -134,6 +134,27 @@ test("tool box: leading spacer stays an empty gap, stamp inside box, bg follows 
 	assert.notEqual(bgOf(done[1]), bgOf(pending[1]), "bg changed on completion");
 });
 
+test("a repainted frame reuses the stamped line instead of rebuilding it", () => {
+	boot([
+		msg(
+			"assistant",
+			[{ type: "toolCall", id: "call1", name: "bash", arguments: {} }],
+			T(11, 9),
+		),
+	]);
+	const c = tool();
+	const paints = () => (globalThis as any)[Symbol.for("pi-when")].paints as number;
+	const first = c.render(W);
+	const before = paints();
+	assert.equal(c.render(W)[1], first[1]);
+	assert.equal(paints(), before, "same frame again: no repaint");
+	assert.notEqual(c.render(W - 10)[1], first[1]);
+	assert.equal(paints(), before + 1, "width change repaints");
+	c.updateResult({ content: [{ type: "text", text: "ok" }], isError: false });
+	c.render(W - 10);
+	assert.equal(paints(), before + 2, "box change repaints");
+});
+
 test("unresolved time is not cached: shows now, then the real time once entries exist", () => {
 	const entries: any[] = [];
 	boot(entries);

@@ -129,6 +129,12 @@ type State = {
 	getEntries: (() => any[]) | undefined; // undefined = no session bound (startup, between sessions)
 	stamps: WeakMap<object, string>;
 	claimed: Set<number>; // user-message timestamps already shown, so repeated texts get their own time
+	// Per-component memo of the last painted top line. Pi re-renders every component on every frame
+	// (each keystroke, each spinner tick), so on a long session this wrapper ran its regexes and
+	// string building thousands of times per frame; the cached leaf lines are the same string objects
+	// across frames, so identity of the first two lines + width is enough to reuse the painted line.
+	memo: WeakMap<object, { l0: string | undefined; l1: string | undefined; width: number; i: number; out: string }>;
+	paints: number; // slow-path count, so a test can prove the memo is hit
 };
 const state: State = ((globalThis as any)[Symbol.for("pi-when")] ??= {
 	patched: false,
@@ -136,7 +142,12 @@ const state: State = ((globalThis as any)[Symbol.for("pi-when")] ??= {
 	getEntries: undefined,
 	stamps: new WeakMap(),
 	claimed: new Set(),
+	memo: new WeakMap(),
+	paints: 0,
 } satisfies State);
+// A 0.2.0 process keeps its state object across /reload; give it the fields the new code expects.
+state.memo ??= new WeakMap();
+state.paints ??= 0;
 
 // Re-read on every module evaluation so /reload applies when.json edits. Cached stamps were
 // rendered with the old format, so drop them when it changes.
@@ -150,6 +161,7 @@ if (
 ) {
 	state.config = loaded;
 	state.stamps = new WeakMap();
+	state.memo = new WeakMap();
 }
 
 /** Entries of the bound session, or undefined when none is bound / the ctx is stale. */
@@ -181,6 +193,24 @@ const userText = (m: any): string =>
 				.map((c: any) => c.text)
 				.join("");
 
+// Tool-call id -> time of the assistant message that issued it. Scanning the entries per
+// component made session load quadratic; the session is append-only, so the index is keyed on
+// entry count plus last entry id (a session switch changes at least one of them).
+let toolTimes: { key: string; map: Map<string, number | undefined> } | undefined;
+const toolTime = (entries: any[], id: string): number | undefined => {
+	const key = `${entries.length}:${entries[entries.length - 1]?.id}`;
+	if (toolTimes?.key !== key) {
+		const map = new Map<string, number | undefined>();
+		for (const e of entries) {
+			if (e.type !== "message" || e.message.role !== "assistant") continue;
+			for (const p of e.message.content)
+				if (p.type === "toolCall") map.set(p.id, entryTime(e));
+		}
+		toolTimes = { key, map };
+	}
+	return toolTimes.map.get(id);
+};
+
 /** Resolved timestamp, or undefined when not (yet) known so the caller does not cache a guess. */
 function timestampFor(c: any): number | undefined {
 	if (c instanceof AssistantMessageComponent) {
@@ -189,15 +219,7 @@ function timestampFor(c: any): number | undefined {
 	}
 	const entries = getEntries();
 	if (!entries) return undefined;
-	if (c instanceof ToolExecutionComponent) {
-		const id = (c as any).toolCallId;
-		for (const e of entries) {
-			if (e.type !== "message" || e.message.role !== "assistant") continue;
-			if (e.message.content.some((p: any) => p.type === "toolCall" && p.id === id))
-				return entryTime(e);
-		}
-		return undefined;
-	}
+	if (c instanceof ToolExecutionComponent) return toolTime(entries, (c as any).toolCallId);
 	// User message: match by text. Pi rebuilds the chat (new components) on compaction, tree
 	// navigation and some settings toggles without a session event, so if every match is already
 	// claimed, treat that as a rebuild, reset, and try once more.
@@ -235,6 +257,16 @@ for (const C of [
 	const orig = C.prototype.render;
 	C.prototype.render = function (this: any, width: number) {
 		const lines = [...orig.call(this, width)];
+		const memo = state.memo.get(this);
+		if (
+			memo &&
+			memo.width === width &&
+			memo.l0 === lines[0] &&
+			memo.l1 === lines[1]
+		) {
+			if (memo.i >= 0) lines[memo.i] = memo.out;
+			return lines;
+		}
 		// Target: the box's top padding line (blank, has a bg) if it is line 0 or 1 (tools start with a
 		// spacer gap), else a blank line 0 (assistant messages have no box). Never touch a content line.
 		const blank = (l: string | undefined) =>
@@ -244,15 +276,27 @@ for (const C of [
 		if (blank(lines[0]) && hasBg(lines[0])) i = 0;
 		else if (blank(lines[0]) && blank(lines[1]) && hasBg(lines[1])) i = 1;
 		else if (blank(lines[0])) i = 0;
-		if (i < 0) return lines;
+		const l0 = lines[0];
+		const l1 = lines[1];
+		state.paints++;
+		if (i < 0) {
+			state.memo.set(this, { l0, l1, width, i, out: "" });
+			return lines;
+		}
 		// Cache only resolved times; a guess ("now") is re-resolved on the next frame.
 		let stamp = state.stamps.get(this);
+		let resolved = true;
 		if (!stamp) {
 			const t = timestampFor(this);
-			if (t === undefined) stamp = fmt(Date.now());
-			else state.stamps.set(this, (stamp = fmt(t)));
+			if (t === undefined) {
+				stamp = fmt(Date.now());
+				resolved = false;
+			} else state.stamps.set(this, (stamp = fmt(t)));
 		}
-		if (width < stamp.length + 1) return lines;
+		if (width < stamp.length + 1) {
+			state.memo.set(this, { l0, l1, width, i: -1, out: "" });
+			return lines;
+		}
 		// Reuse the line's own background SGR (tools swap box/bg on completion, so component fields lie);
 		// spacer gaps have none and stay gaps.
 		const bgCode = lines[i].match(BG_SGR)?.[0];
@@ -275,6 +319,7 @@ for (const C of [
 		const body =
 			" ".repeat(width - stamp.length - 1) + `${fg}${stamp}\x1b[39;22m `;
 		lines[i] = prefix + (bg ? bg(body) : body);
+		if (resolved) state.memo.set(this, { l0, l1, width, i, out: lines[i] });
 		return lines;
 	};
 }
